@@ -2,14 +2,50 @@ import streamlit as st
 import pandas as pd
 import xml.etree.ElementTree as ET
 from io import BytesIO
+from PIL import Image
+import os
 
 # Configuração da página
-st.set_page_config(page_title="Automação DIFAL MG", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Identificador de DIFAL", page_icon="📊", layout="wide")
 
-st.title("🚀 Automação de Controle de DIFAL - MG")
-st.markdown("### Transforme seus XMLs de NF-e em planilhas de controle instantaneamente.")
+# Estilo CSS para melhorar a aparência
+st.markdown("""
+    <style>
+    .main {
+        background-color: #f5f5f5;
+    }
+    .stButton>button {
+        width: 100%;
+        border-radius: 5px;
+        height: 3em;
+        background-color: #FF4B4B;
+        color: white;
+    }
+    footer {
+        visibility: hidden;
+    }
+    .footer-text {
+        text-align: center;
+        color: #999;
+        padding: 20px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-# Função de extração (a mesma lógica do seu robô anterior)
+# Exibição do Logo na Barra Lateral
+if os.path.exists("logo.png"):
+    logo = Image.open("logo.png")
+    st.sidebar.image(logo, use_container_width=True)
+
+st.sidebar.divider()
+st.sidebar.markdown("### ⚙️ Configurações")
+st.sidebar.info("Arraste os arquivos XML extraídos do seu sistema fiscal para processar o DIFAL de Minas Gerais.")
+
+# Título Principal Atualizado
+st.title("🎯 Identificador Automático de DIFAL")
+st.write("---")
+
+# Função de extração
 def processar_xml(arquivo):
     try:
         tree = ET.parse(arquivo)
@@ -31,25 +67,26 @@ def processar_xml(arquivo):
         cfops_remessa = ['6923', '6949', '6910', '6808', '6902']
 
         if uf_origem == uf_destino:
-            justificativa = f'Operação Interna ({uf_origem}-{uf_destino})'
+            justificativa = f'Operação Interna ({uf_origem}-{uf_destino}) - Sem DIFAL'
         elif cfop in cfops_remessa:
-            justificativa = 'Remessa de Mercadoria'
+            justificativa = 'Remessa de Mercadoria - Sem DIFAL'
         elif cfop.startswith('6'):
             percentual = 0.0735
-            tratativa = 'Gerar e recolher guia de DIFAL para MG'
-            justificativa = f'Venda Interestadual ({"Simples" if crt=="1" else "Normal"})'
-        
+            tratativa = 'Gerar e recolher guia de DIFAL para o estado de MG'
+            justificativa = f'Venda Interestadual - Fornecedor {"Simples" if crt=="1" else "Normal"}'
+        else:
+            justificativa = 'Outras operações'
+
         return {
-            'NF': nf, 'FORNECEDOR': fornecedor, 'VALOR NF': valor_nf,
-            '%': f"{percentual*100:.2f}%", 'DIFAL': round(valor_nf * percentual, 2),
-            'TOTAL': round(valor_nf * (1 + percentual), 2),
+            'NF': nf, 'FORNECEDOR': fornecedor, 'VALOR DA NF': valor_nf,
+            '%': f"{percentual*100:.2f}%", 'DIF ALIQUOTA': round(valor_nf * percentual, 2),
+            'VALOR REAL': round(valor_nf * (1 + percentual), 2),
             'JUSTIFICATIVA': justificativa, 'TRATATIVA': tratativa
         }
     except: return None
 
-# Área de Upload no site
-st.sidebar.header("Configurações")
-arquivos_xml = st.file_uploader("Arraste seus arquivos XML aqui", type=['xml'], accept_multiple_files=True)
+# Área de Upload
+arquivos_xml = st.file_uploader("📥 Arraste seus arquivos XML aqui", type=['xml'], accept_multiple_files=True)
 
 if arquivos_xml:
     dados_finais = []
@@ -60,21 +97,33 @@ if arquivos_xml:
     
     if dados_finais:
         df = pd.DataFrame(dados_finais)
+        st.success(f"✅ {len(dados_finais)} notas processadas!")
         
-        # Exibe a tabela bonitona no navegador
-        st.success(f"✅ {len(dados_finais)} notas processadas com sucesso!")
+        # Exibe a tabela
         st.dataframe(df, use_container_width=True)
 
-        # Botão para baixar o Excel
+        # Download do Excel
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='DIFAL')
         
         st.download_button(
-            label="📥 Baixar Planilha Excel",
+            label="💾 Baixar Relatório Excel",
             data=output.getvalue(),
-            file_name="Relatorio_DIFAL_MG.xlsx",
+            file_name="Relatorio_DIFAL_GrupoS.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
-        st.error("Nenhum dado válido encontrado nos XMLs.")
+        st.error("Nenhum dado válido encontrado.")
+
+# Rodapé com Créditos
+st.write("---")
+st.markdown(
+    """
+    <div class="footer-text">
+        🔒 Sistema de Apoio Fiscal - Grupo S<br>
+        <b>Desenvolvido por Estevão Henrique</b>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
