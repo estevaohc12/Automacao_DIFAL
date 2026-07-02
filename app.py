@@ -5,16 +5,24 @@ from io import BytesIO
 from PIL import Image
 import os
 
+# Configuração da página
 st.set_page_config(page_title="Identificador de DIFAL", page_icon="📊", layout="wide")
 
 # Estilo Grupo Santo Anjo
-st.markdown("""<style>.main { background-color: #f8f9fa; } .stButton>button { width: 100%; border-radius: 8px; background-color: #ff4b4b; color: white; font-weight: bold; } .footer-text { text-align: center; color: #666; padding: 30px; }</style>""", unsafe_allow_html=True)
+st.markdown("""
+    <style>
+    .main { background-color: #f8f9fa; }
+    .stButton>button { width: 100%; border-radius: 8px; background-color: #ff4b4b; color: white; font-weight: bold; }
+    .footer-text { text-align: center; color: #666; padding: 30px; font-family: sans-serif; }
+    </style>
+    """, unsafe_allow_html=True)
 
+# Logo Lateral
 if os.path.exists("logo.png"):
     st.sidebar.image("logo.png", use_container_width=True)
 
 st.sidebar.divider()
-st.sidebar.info("🛡️ Sistema Exclusivo - Grupo Santo Anjo")
+st.sidebar.info("🛡️ Sistema de Apoio Fiscal - **Grupo Santo Anjo**")
 
 st.title("🎯 Identificador Automático de DIFAL")
 st.markdown("#### Inteligência Fiscal - Grupo Santo Anjo")
@@ -24,15 +32,27 @@ def processar_xml(arquivo):
     try:
         conteudo = arquivo.read()
         root = ET.fromstring(conteudo)
-        # Tenta identificar se é um evento ou uma nota
+        ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
+        
+        # --- VERIFICAÇÃO DE TIPO DE ARQUIVO ---
         tag_root = root.tag
         
-        if "procEvento" in tag_root or "evento" in tag_root.lower():
-            return f"⚠️ O arquivo {arquivo.name} é um EVENTO (Correção/Cancelamento). Por favor, suba o XML da NOTA (procNFe)."
+        # Se for um EVENTO (Ciência, Cancelamento, Carta de Correção)
+        if "procEvento" in tag_root or "retEvento" in tag_root:
+            chave_node = root.find('.//nfe:chNFe', ns)
+            chave = chave_node.text if chave_node is not None else "Chave não encontrada"
+            return {
+                'NF': 'EVENTO',
+                'FORNECEDOR': f"CHAVE: {chave}",
+                'VALOR NF': 0.0,
+                '%': "0.00%",
+                'DIF ALIQUOTA': 0.0,
+                'VALOR REAL': 0.0,
+                'JUSTIFICATIVA': "Arquivo de Evento (Ciência/Correção) - Sem dados financeiros",
+                'TRATATIVA': "Subir o XML da nota (procNFe) para calcular"
+            }
 
-        ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
-
-        # Busca das tags
+        # --- PROCESSAMENTO DE NOTA FISCAL (procNFe) ---
         nf_node = root.find('.//nfe:nNF', ns)
         emit_node = root.find('.//nfe:emit/nfe:xNome', ns)
         valor_node = root.find('.//nfe:vNF', ns)
@@ -41,11 +61,12 @@ def processar_xml(arquivo):
         uf_dest_node = root.find('.//nfe:dest/nfe:UF', ns)
         crt_node = root.find('.//nfe:CRT', ns)
 
+        # Se as tags básicas não existirem, ignora
         if nf_node is None or valor_node is None:
-            return f"❌ Erro: O arquivo {arquivo.name} não parece ser uma NF-e válida."
+            return f"⚠️ O arquivo {arquivo.name} não contém dados de faturamento."
 
         nf = nf_node.text
-        fornecedor = emit_node.text if emit_node is not None else "Não encontrado"
+        fornecedor = emit_node.text if emit_node is not None else "Não identificado"
         valor_nf = float(valor_node.text)
         cfop = cfop_node.text
         crt = crt_node.text if crt_node is not None else "3"
@@ -58,13 +79,15 @@ def processar_xml(arquivo):
         cfops_remessa = ['6923', '6949', '6910', '6808', '6902']
 
         if uf_origem == uf_destino:
-            justificativa = f'Operação Interna ({uf_origem}-{uf_destino})'
+            justificativa = f'Operação Interna ({uf_origem}-{uf_destino}) - Sem DIFAL'
         elif cfop in cfops_remessa:
-            justificativa = 'Remessa de Mercadoria'
+            justificativa = 'Remessa de Mercadoria - Sem DIFAL'
         elif cfop.startswith('6'):
             percentual = 0.0735
-            tratativa = 'Gerar e recolher guia de DIFAL para MG'
-            justificativa = f'Venda Interestadual ({"Simples" if crt=="1" else "Normal"})'
+            tratativa = 'Gerar e recolher guia de DIFAL para o estado de MG'
+            justificativa = f'Venda Interestadual - Fornecedor {"Simples" if crt=="1" else "Normal"}'
+        else:
+            justificativa = 'Outras operações'
         
         dif_aliq = round(valor_nf * percentual, 2)
         return {
@@ -74,28 +97,42 @@ def processar_xml(arquivo):
             'JUSTIFICATIVA': justificativa, 'TRATATIVA': tratativa
         }
     except Exception as e:
-        return f"❌ Erro ao processar {arquivo.name}: {str(e)}"
+        return f"❌ Erro crítico no arquivo {arquivo.name}: {str(e)}"
 
-# Upload
-arquivos_xml = st.file_uploader("📥 Arraste seus arquivos XML aqui (procNFe)", type=['xml'], accept_multiple_files=True)
+# Área de Upload
+arquivos_xml = st.file_uploader("📥 Arraste seus arquivos XML aqui (NF-e ou Eventos)", type=['xml'], accept_multiple_files=True)
 
 if arquivos_xml:
     dados_finais = []
+    avisos = []
+    
     for xml in arquivos_xml:
         resultado = processar_xml(xml)
         if isinstance(resultado, dict):
             dados_finais.append(resultado)
         else:
-            st.warning(resultado) # Mostra o aviso se for um evento
+            avisos.append(resultado)
     
+    if avisos:
+        for aviso in avisos:
+            st.warning(aviso)
+
     if dados_finais:
         df = pd.DataFrame(dados_finais)
-        st.success(f"✅ {len(dados_finais)} notas processadas!")
+        st.success(f"✅ {len(dados_finais)} itens processados!")
         st.dataframe(df, use_container_width=True)
+
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='DIFAL')
-        st.download_button(label="💾 Baixar Relatório Grupo Santo Anjo", data=output.getvalue(), file_name="Relatorio_DIFAL_SantoAnjo.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        
+        st.download_button(
+            label="💾 Baixar Relatório Grupo Santo Anjo",
+            data=output.getvalue(),
+            file_name="Relatorio_DIFAL_SantoAnjo.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
+# Rodapé
 st.write("---")
 st.markdown("""<div class="footer-text">🛡️ Sistema de Apoio Fiscal - <b>Grupo Santo Anjo</b><br>👨‍💻 Desenvolvido por <b>Estevão Henrique</b></div>""", unsafe_allow_html=True)
