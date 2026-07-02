@@ -5,61 +5,57 @@ from io import BytesIO
 from PIL import Image
 import os
 
-# Configuração da página
 st.set_page_config(page_title="Identificador de DIFAL", page_icon="📊", layout="wide")
 
-# Estilo CSS para deixar o visual "Premium"
+# Estilo Premium
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
-    .stButton>button {
-        width: 100%;
-        border-radius: 8px;
-        background-color: #ff4b4b;
-        color: white;
-        font-weight: bold;
-    }
-    .footer-text {
-        text-align: center;
-        color: #666;
-        padding: 30px;
-        font-family: sans-serif;
-    }
-    .sidebar .sidebar-content { background-color: #ffffff; }
+    .stButton>button { width: 100%; border-radius: 8px; background-color: #ff4b4b; color: white; font-weight: bold; }
+    .footer-text { text-align: center; color: #666; padding: 30px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- LOGO NA BARRA LATERAL ---
-# O código vai procurar por 'logo.png' ou 'logo.jpg'
+# Logo
 if os.path.exists("logo.png"):
     st.sidebar.image("logo.png", use_container_width=True)
-elif os.path.exists("logo.jpg"):
-    st.sidebar.image("logo.jpg", use_container_width=True)
 
 st.sidebar.divider()
 st.sidebar.markdown("### ⚙️ Sistema Interno")
-st.sidebar.info("Ferramenta exclusiva para o processamento de XMLs de NF-e do **Grupo Santo Anjo**.")
+st.sidebar.info("Grupo Santo Anjo - Processamento de NF-e")
 
-# --- TÍTULO PRINCIPAL ---
 st.title("🎯 Identificador Automático de DIFAL")
 st.markdown("#### Inteligência Fiscal - Grupo Santo Anjo")
 st.write("---")
 
 def processar_xml(arquivo):
     try:
-        tree = ET.parse(arquivo)
-        root = tree.getroot()
+        # Lê o conteúdo do arquivo
+        conteudo = arquivo.read()
+        root = ET.fromstring(conteudo)
         ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
-        nf = root.find('.//nfe:nNF', ns).text
-        fornecedor = root.find('.//nfe:emit/nfe:xNome', ns).text
-        valor_nf = float(root.find('.//nfe:vNF', ns).text)
-        crt = root.find('.//nfe:CRT', ns).text
-        cfop = root.find('.//nfe:det/nfe:prod/nfe:CFOP', ns).text
+
+        # Busca das tags (com tratamento de erro específico para cada uma)
+        nf_node = root.find('.//nfe:nNF', ns)
+        emit_node = root.find('.//nfe:emit/nfe:xNome', ns)
+        valor_node = root.find('.//nfe:vNF', ns)
+        crt_node = root.find('.//nfe:CRT', ns)
+        cfop_node = root.find('.//nfe:det/nfe:prod/nfe:CFOP', ns)
+        uf_orig_node = root.find('.//nfe:cUF', ns)
+        uf_dest_node = root.find('.//nfe:dest/nfe:UF', ns)
+
+        if None in [nf_node, emit_node, valor_node, cfop_node]:
+            return f"Erro: Tags obrigatórias não encontradas no arquivo {arquivo.name}"
+
+        nf = nf_node.text
+        fornecedor = emit_node.text
+        valor_nf = float(valor_node.text)
+        crt = crt_node.text if crt_node is not None else "3"
+        cfop = cfop_node.text
         
         mapa_ufs = {'11':'RO','12':'AC','13':'AM','14':'RR','15':'PA','16':'AP','17':'TO','21':'MA','22':'PI','23':'CE','24':'RN','25':'PB','26':'PE','27':'AL','28':'SE','29':'BA','31':'MG','32':'ES','33':'RJ','35':'SP','41':'PR','42':'SC','43':'RS','50':'MS','51':'MT','52':'GO','53':'DF'}
-        cod_uf_origem = root.find('.//nfe:cUF', ns).text
-        uf_origem = mapa_ufs.get(cod_uf_origem, '??')
-        uf_destino = root.find('.//nfe:dest/nfe:UF', ns).text
+        uf_origem = mapa_ufs.get(uf_orig_node.text, '??')
+        uf_destino = uf_dest_node.text
 
         justificativa = ""; tratativa = "Nenhuma ação necessária"; percentual = 0.0
         cfops_remessa = ['6923', '6949', '6910', '6808', '6902']
@@ -80,16 +76,30 @@ def processar_xml(arquivo):
             'VALOR REAL': round(valor_nf + dif_aliq, 2),
             'JUSTIFICATIVA': justificativa, 'TRATATIVA': tratativa
         }
-    except: return None
+    except Exception as e:
+        return f"Erro ao processar {arquivo.name}: {str(e)}"
 
-# --- UPLOAD ---
+# Upload
 arquivos_xml = st.file_uploader("📥 Arraste seus arquivos XML aqui", type=['xml'], accept_multiple_files=True)
 
 if arquivos_xml:
-    dados = [res for res in [processar_xml(x) for x in arquivos_xml] if res]
-    if dados:
-        df = pd.DataFrame(dados)
-        st.success(f"✅ {len(dados)} notas processadas!")
+    dados_finais = []
+    erros = []
+    
+    for xml in arquivos_xml:
+        resultado = processar_xml(xml)
+        if isinstance(resultado, dict):
+            dados_finais.append(resultado)
+        else:
+            erros.append(resultado)
+    
+    if erros:
+        for erro in erros:
+            st.error(erro)
+
+    if dados_finais:
+        df = pd.DataFrame(dados_finais)
+        st.success(f"✅ {len(dados_finais)} notas processadas!")
         st.dataframe(df, use_container_width=True)
 
         output = BytesIO()
@@ -103,14 +113,5 @@ if arquivos_xml:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-# --- RODAPÉ COM CRÉDITOS ---
 st.write("---")
-st.markdown(
-    """
-    <div class="footer-text">
-        🛡️ Sistema de Apoio Fiscal - <b>Grupo Santo Anjo</b><br>
-        👨‍💻 Desenvolvido por <b>Estevão Henrique</b>
-    </div>
-    """, 
-    unsafe_allow_html=True
-)
+st.markdown("""<div class="footer-text">🛡️ Sistema de Apoio Fiscal - <b>Grupo Santo Anjo</b><br>👨‍💻 Desenvolvido por <b>Estevão Henrique</b></div>""", unsafe_allow_html=True)
