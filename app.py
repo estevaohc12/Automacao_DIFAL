@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import xml.etree.ElementTree as ET
 from io import BytesIO
-from PIL import Image
 import os
 
 # Configuração da página
@@ -34,33 +33,33 @@ def processar_xml(arquivo):
         ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
         tag_root = root.tag
         
-        # --- CASO SEJA UM EVENTO (Ciência, Correção, etc) ---
+        # --- SE FOR UM EVENTO (Ciência, Cancelamento, etc.) ---
         if "procEvento" in tag_root or "retEvento" in tag_root or "evento" in tag_root.lower():
-            # Busca o CNPJ do emissor no evento
-            cnpj_node = root.find('.//nfe:CNPJ', ns)
             chave_node = root.find('.//nfe:chNFe', ns)
-            
-            fornecedor = f"CNPJ: {cnpj_node.text}" if cnpj_node is not None else "Fornecedor não encontrado no evento"
             chave = chave_node.text if chave_node is not None else "Chave não encontrada"
-            
             return {
                 'NF': 'EVENTO',
-                'FORNECEDOR': fornecedor,
+                'FORNECEDOR': "⚠️ Arquivo de Evento (Sem Nome)",
                 'VALOR NF': 0.0,
                 '%': "0.00%",
                 'DIF ALIQUOTA': 0.0,
                 'VALOR REAL': 0.0,
-                'JUSTIFICATIVA': f"Arquivo de Evento - Chave: {chave}",
-                'TRATATIVA': "Subir o XML da nota (procNFe) para cálculos"
+                'JUSTIFICATIVA': f"Evento de Ciência/Correção da Chave: {chave}",
+                'TRATATIVA': "Para calcular, suba o arquivo XML da NOTA (procNFe)"
             }
 
-        # --- CASO SEJA UMA NOTA FISCAL (procNFe) ---
+        # --- SE FOR UMA NOTA FISCAL (procNFe) ---
+        # Busca específica dentro do grupo EMITENTE (Fornecedor)
+        emitente = root.find('.//nfe:emit', ns)
+        
+        if emitente is not None:
+            fornecedor = emitente.find('nfe:xNome', ns).text
+        else:
+            # Caso o XML tenha uma estrutura sem namespace direto (comum em alguns sistemas)
+            emitente_alt = root.find('.//emit')
+            fornecedor = emitente_alt.find('xNome').text if emitente_alt is not None else "FORNECEDOR NÃO LOCALIZADO"
+
         nf_node = root.find('.//nfe:nNF', ns)
-        # Busca o nome de forma mais robusta
-        emit_node = root.find('.//nfe:emit/nfe:xNome', ns)
-        if emit_node is None: # Tenta busca alternativa sem o path completo
-             emit_node = root.find('.//nfe:xNome', ns)
-             
         valor_node = root.find('.//nfe:vNF', ns)
         cfop_node = root.find('.//nfe:det/nfe:prod/nfe:CFOP', ns)
         uf_orig_node = root.find('.//nfe:cUF', ns)
@@ -68,10 +67,9 @@ def processar_xml(arquivo):
         crt_node = root.find('.//nfe:CRT', ns)
 
         if nf_node is None or valor_node is None:
-            return f"⚠️ O arquivo {arquivo.name} não contém dados de faturamento (verifique se é uma NF-e)."
+            return f"⚠️ O arquivo {arquivo.name} não contém dados de faturamento."
 
         nf = nf_node.text
-        fornecedor = emit_node.text if emit_node is not None else "NOME NÃO ENCONTRADO"
         valor_nf = float(valor_node.text)
         cfop = cfop_node.text if cfop_node is not None else "0000"
         crt = crt_node.text if crt_node is not None else "3"
@@ -104,13 +102,12 @@ def processar_xml(arquivo):
     except Exception as e:
         return f"❌ Erro no arquivo {arquivo.name}: {str(e)}"
 
-# Interface de Upload
+# Interface
 arquivos_xml = st.file_uploader("📥 Arraste seus arquivos XML aqui", type=['xml'], accept_multiple_files=True)
 
 if arquivos_xml:
     dados_finais = []
     avisos = []
-    
     for xml in arquivos_xml:
         resultado = processar_xml(xml)
         if isinstance(resultado, dict):
@@ -119,8 +116,9 @@ if arquivos_xml:
             avisos.append(resultado)
     
     if avisos:
-        for aviso in avisos:
-            st.warning(aviso)
+        with st.expander("🔍 Ver avisos de arquivos ignorados"):
+            for aviso in avisos:
+                st.warning(aviso)
 
     if dados_finais:
         df = pd.DataFrame(dados_finais)
