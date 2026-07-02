@@ -17,7 +17,6 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# Logo Lateral
 if os.path.exists("logo.png"):
     st.sidebar.image("logo.png", use_container_width=True)
 
@@ -33,42 +32,48 @@ def processar_xml(arquivo):
         conteudo = arquivo.read()
         root = ET.fromstring(conteudo)
         ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
-        
-        # --- VERIFICAÇÃO DE TIPO DE ARQUIVO ---
         tag_root = root.tag
         
-        # Se for um EVENTO (Ciência, Cancelamento, Carta de Correção)
-        if "procEvento" in tag_root or "retEvento" in tag_root:
+        # --- CASO SEJA UM EVENTO (Ciência, Correção, etc) ---
+        if "procEvento" in tag_root or "retEvento" in tag_root or "evento" in tag_root.lower():
+            # Busca o CNPJ do emissor no evento
+            cnpj_node = root.find('.//nfe:CNPJ', ns)
             chave_node = root.find('.//nfe:chNFe', ns)
+            
+            fornecedor = f"CNPJ: {cnpj_node.text}" if cnpj_node is not None else "Fornecedor não encontrado no evento"
             chave = chave_node.text if chave_node is not None else "Chave não encontrada"
+            
             return {
                 'NF': 'EVENTO',
-                'FORNECEDOR': f"CHAVE: {chave}",
+                'FORNECEDOR': fornecedor,
                 'VALOR NF': 0.0,
                 '%': "0.00%",
                 'DIF ALIQUOTA': 0.0,
                 'VALOR REAL': 0.0,
-                'JUSTIFICATIVA': "Arquivo de Evento (Ciência/Correção) - Sem dados financeiros",
-                'TRATATIVA': "Subir o XML da nota (procNFe) para calcular"
+                'JUSTIFICATIVA': f"Arquivo de Evento - Chave: {chave}",
+                'TRATATIVA': "Subir o XML da nota (procNFe) para cálculos"
             }
 
-        # --- PROCESSAMENTO DE NOTA FISCAL (procNFe) ---
+        # --- CASO SEJA UMA NOTA FISCAL (procNFe) ---
         nf_node = root.find('.//nfe:nNF', ns)
+        # Busca o nome de forma mais robusta
         emit_node = root.find('.//nfe:emit/nfe:xNome', ns)
+        if emit_node is None: # Tenta busca alternativa sem o path completo
+             emit_node = root.find('.//nfe:xNome', ns)
+             
         valor_node = root.find('.//nfe:vNF', ns)
         cfop_node = root.find('.//nfe:det/nfe:prod/nfe:CFOP', ns)
         uf_orig_node = root.find('.//nfe:cUF', ns)
         uf_dest_node = root.find('.//nfe:dest/nfe:UF', ns)
         crt_node = root.find('.//nfe:CRT', ns)
 
-        # Se as tags básicas não existirem, ignora
         if nf_node is None or valor_node is None:
-            return f"⚠️ O arquivo {arquivo.name} não contém dados de faturamento."
+            return f"⚠️ O arquivo {arquivo.name} não contém dados de faturamento (verifique se é uma NF-e)."
 
         nf = nf_node.text
-        fornecedor = emit_node.text if emit_node is not None else "Não identificado"
+        fornecedor = emit_node.text if emit_node is not None else "NOME NÃO ENCONTRADO"
         valor_nf = float(valor_node.text)
-        cfop = cfop_node.text
+        cfop = cfop_node.text if cfop_node is not None else "0000"
         crt = crt_node.text if crt_node is not None else "3"
         
         mapa_ufs = {'11':'RO','12':'AC','13':'AM','14':'RR','15':'PA','16':'AP','17':'TO','21':'MA','22':'PI','23':'CE','24':'RN','25':'PB','26':'PE','27':'AL','28':'SE','29':'BA','31':'MG','32':'ES','33':'RJ','35':'SP','41':'PR','42':'SC','43':'RS','50':'MS','51':'MT','52':'GO','53':'DF'}
@@ -97,10 +102,10 @@ def processar_xml(arquivo):
             'JUSTIFICATIVA': justificativa, 'TRATATIVA': tratativa
         }
     except Exception as e:
-        return f"❌ Erro crítico no arquivo {arquivo.name}: {str(e)}"
+        return f"❌ Erro no arquivo {arquivo.name}: {str(e)}"
 
-# Área de Upload
-arquivos_xml = st.file_uploader("📥 Arraste seus arquivos XML aqui (NF-e ou Eventos)", type=['xml'], accept_multiple_files=True)
+# Interface de Upload
+arquivos_xml = st.file_uploader("📥 Arraste seus arquivos XML aqui", type=['xml'], accept_multiple_files=True)
 
 if arquivos_xml:
     dados_finais = []
@@ -126,13 +131,7 @@ if arquivos_xml:
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='DIFAL')
         
-        st.download_button(
-            label="💾 Baixar Relatório Grupo Santo Anjo",
-            data=output.getvalue(),
-            file_name="Relatorio_DIFAL_SantoAnjo.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        st.download_button(label="💾 Baixar Relatório Grupo Santo Anjo", data=output.getvalue(), file_name="Relatorio_DIFAL_SantoAnjo.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# Rodapé
 st.write("---")
 st.markdown("""<div class="footer-text">🛡️ Sistema de Apoio Fiscal - <b>Grupo Santo Anjo</b><br>👨‍💻 Desenvolvido por <b>Estevão Henrique</b></div>""", unsafe_allow_html=True)
