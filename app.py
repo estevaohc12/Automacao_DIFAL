@@ -4,15 +4,28 @@ import xml.etree.ElementTree as ET
 from io import BytesIO
 import os
 
-# Configuração Institucional
-st.set_page_config(page_title="Auditoria Fiscal - Grupo Santo Anjo", page_icon="🛡️", layout="wide")
+# Configuração Institucional - Grupo Santo Anjo
+st.set_page_config(page_title="Auditoria DIFAL - Grupo Santo Anjo", page_icon="🛡️", layout="wide")
 
 # Estilo Corporativo Minimalista
 st.markdown("""
     <style>
     .main { background-color: #fcfcfc; }
-    .stButton>button { width: 100%; border-radius: 5px; background-color: #2c3e50; color: white; font-weight: bold; }
-    .footer-text { text-align: center; color: #95a5a6; padding: 20px; font-size: 0.8em; border-top: 1px solid #eee; margin-top: 50px; }
+    .stButton>button { 
+        width: 100%; 
+        border-radius: 5px; 
+        background-color: #2c3e50; 
+        color: white; 
+        font-weight: bold;
+    }
+    .footer-text { 
+        text-align: center; 
+        color: #95a5a6; 
+        padding: 30px; 
+        font-size: 0.8em; 
+        border-top: 1px solid #eee;
+        margin-top: 50px; 
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -21,7 +34,7 @@ if os.path.exists("logo.png"):
 
 st.sidebar.divider()
 st.sidebar.markdown("### 📊 Status: Modo Auditoria")
-st.sidebar.info("Neste modo, todos os arquivos enviados são listados individualmente para conferência total (1 para 1).")
+st.sidebar.info("Modo de conferência total (1 arquivo enviado = 1 linha na tabela).")
 
 st.title("🎯 Identificador Inteligente de DIFAL")
 st.markdown("#### Divisão de Apoio Fiscal — **Grupo Santo Anjo**")
@@ -35,110 +48,96 @@ def processar_xml(arquivo):
         ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
         tag_root = root.tag
 
-        # --- CASO 1: ARQUIVO DE EVENTO (CIÊNCIA, CORREÇÃO, ETC) ---
+        # --- CASO 1: ARQUIVO DE EVENTO ---
         if "procEvento" in tag_root or "retEvento" in tag_root or "evento" in tag_root.lower():
-            chave_node = root.find('.//nfe:chNFe', ns)
-            desc_node = root.find('.//nfe:xEvento', ns)
-            chave = chave_node.text if chave_node is not None else "N/A"
-            descricao = desc_node.text if desc_node is not None else "Registro de Evento"
+            ch_node = root.find('.//nfe:chNFe', ns)
+            ev_node = root.find('.//nfe:xEvento', ns)
+            chave = ch_node.text if ch_node is not None else "N/A"
+            evento = ev_node.text if ev_node is not None else "Evento/Ciência"
             
             return {
                 'ARQUIVO': nome_do_arquivo, 'SITUAÇÃO': "INFORMATIVO", 'NF': 'EVENTO',
                 'FORNECEDOR': f"Chave: {chave}", 'VALOR NF': 0.0,
                 '%': "0.00%", 'VLR DIFAL': 0.0, 'TOTAL REAL': 0.0,
-                'JUSTIFICATIVA': f"LOG: {descricao}", 'PROCEDIMENTO': "Manter em arquivo"
+                'JUSTIFICATIVA': f"Log: {evento}", 'PROCEDIMENTO': "Manter arquivado"
             }
 
         # --- CASO 2: NOTA FISCAL (procNFe) ---
         nf_node = root.find('.//nfe:nNF', ns)
         if nf_node is not None:
-            emitente = root.find('.//nfe:emit', ns)
-            fornecedor = emitente.find('nfe:xNome', ns).text if emitente is not None else "NOME NÃO ENCONTRADO"
-            nf = nf_node.text
-            valor_nf = float(root.find('.//nfe:vNF', ns).text)
+            emit = root.find('.//nfe:emit', ns)
+            forn = emit.find('nfe:xNome', ns).text if emit is not None else "NOME NÃO ENCONTRADO"
+            v_nf = float(root.find('.//nfe:vNF', ns).text)
             cfop = root.find('.//nfe:det/nfe:prod/nfe:CFOP', ns).text
-            crt = root.find('.//nfe:CRT', ns).text if root.find('.//nfe:CRT', ns) is not None else "3"
             
-            mapa_ufs = {'11':'RO','12':'AC','13':'AM','14':'RR','15':'PA','16':'AP','17':'TO','21':'MA','22':'PI','23':'CE','24':'RN','25':'PB','26':'PE','27':'AL','28':'SE','29':'BA','31':'MG','32':'ES','33':'RJ','35':'SP','41':'PR','42':'SC','43':'RS','50':'MS','51':'MT','52':'GO','53':'DF'}
-            uf_origem = mapa_ufs.get(root.find('.//nfe:cUF', ns).text, '??')
-            uf_destino = root.find('.//nfe:dest/nfe:UF', ns).text if root.find('.//nfe:dest/nfe:UF', ns) is not None else "??"
+            # Mapeamento UFs
+            map_ufs = {'11':'RO','12':'AC','13':'AM','14':'RR','15':'PA','16':'AP','17':'TO','21':'MA','22':'PI','23':'CE','24':'RN','25':'PB','26':'PE','27':'AL','28':'SE','29':'BA','31':'MG','32':'ES','33':'RJ','35':'SP','41':'PR','42':'SC','43':'RS','50':'MS','51':'MT','52':'GO','53':'DF'}
+            u_orig = map_ufs.get(root.find('.//nfe:cUF', ns).text, '??')
+            u_dest = root.find('.//nfe:dest/nfe:UF', ns).text if root.find('.//nfe:dest/nfe:UF', ns) is not None else "??"
 
-            # Lógica DIFAL
-            percentual = 0.0
-            status_situacao = "ISENTO"
-            tratativa = "Sem ações"
-            cfops_remessa = ['6923', '6949', '6910', '6808', '6902', '6911', '6912', '6917']
+            perc = 0.0
+            situ = "ISENTO"
+            trata = "OK"
+            remessas = ['6923', '6949', '6910', '6808', '6902', '6911', '6912', '6917']
 
-            if uf_origem == uf_destino:
-                justificativa = f"Interna ({uf_origem}-{uf_destino})"
-            elif cfop in cfops_remessa:
-                justificativa = f"Remessa/Outros (CFOP {cfop})"
+            if u_orig == u_dest:
+                just = f"Interna ({u_orig}-{u_dest})"
+            elif cfop in remessas:
+                just = f"Remessa (CFOP {cfop})"
             elif cfop.startswith('6'):
-                percentual = 0.0735
-                status_situacao = "DIFAL"
-                tratativa = "CALCULAR GUIA"
-                justificativa = f"Interestadual (Forn. CRT {crt})"
+                perc = 0.0735
+                situ = "DIFAL"
+                trata = "CALCULAR GUIA"
+                just = "Interestadual (Pagar DIFAL)"
             else:
-                justificativa = f"Análise Manual (CFOP {cfop})"
+                just = f"CFOP {cfop}"
 
-            dif_aliq = round(valor_nf * percentual, 2)
-            
+            v_difal = round(v_nf * perc, 2)
             return {
-                'ARQUIVO': nome_do_arquivo, 'SITUAÇÃO': status_situacao, 'NF': nf, 
-                'FORNECEDOR': fornecedor, 'VALOR NF': valor_nf,
-                '%': f"{percentual*100:.2f}%", 'VLR DIFAL': dif_aliq,
-                'TOTAL REAL': round(valor_nf + dif_aliq, 2),
-                'JUSTIFICATIVA': justificativa, 'PROCEDIMENTO': tratativa
+                'ARQUIVO': nome_do_arquivo, 'SITUAÇÃO': situ, 'NF': nf_node.text, 
+                'FORNECEDOR': forn, 'VALOR NF': v_nf,
+                '%': f"{perc*100:.2f}%", 'VLR DIFAL': v_difal,
+                'TOTAL REAL': round(v_nf + v_difal, 2),
+                'JUSTIFICATIVA': just, 'PROCEDIMENTO': trata
             }
 
-        # --- CASO 3: ARQUIVO ESTRANHO ---
-        return {
-            'ARQUIVO': nome_do_arquivo, 'SITUAÇÃO': "NÃO RECONHECIDO", 'NF': '-',
-            'FORNECEDOR': "Estrutura XML fora do padrão SEFAZ", 'VALOR NF': 0.0,
-            '%': "0.00%", 'VLR DIFAL': 0.0, 'TOTAL REAL': 0.0,
-            'JUSTIFICATIVA': "Arquivo não processável pelo motor DIFAL", 'PROCEDIMENTO': "Verificar manual"
-        }
+        return {'ARQUIVO': nome_do_arquivo, 'SITUAÇÃO': "XML INVÁLIDO", 'NF': '-', 'FORNECEDOR': '-', 'VALOR NF': 0.0, '%': '0%', 'VLR DIFAL': 0, 'TOTAL REAL': 0, 'JUSTIFICATIVA': 'Fora do padrão SEFAZ', 'PROCEDIMENTO': '-'}
+    except:
+        return {'ARQUIVO': nome_do_arquivo, 'SITUAÇÃO': "ERRO", 'NF': '-', 'FORNECEDOR': 'Falha na leitura', 'VALOR NF': 0.0, '%': '0%', 'VLR DIFAL': 0, 'TOTAL REAL': 0, 'JUSTIFICATIVA': 'Erro técnico', 'PROCEDIMENTO': '-'}
 
-    except Exception as e:
-        return {
-            'ARQUIVO': nome_do_arquivo, 'SITUAÇÃO': "ERRO", 'NF': '-',
-            'FORNECEDOR': f"Falha na leitura", 'VALOR NF': 0.0,
-            '%': "0.00%", 'VLR DIFAL': 0.0, 'TOTAL REAL': 0.0,
-            'JUSTIFICATIVA': f"Erro: {str(e)[:50]}", 'PROCEDIMENTO': "Ignorar arquivo"
-        }
+# Área de Upload
+xmls_subidos = st.file_uploader("📥 Arraste os XMLs (conferência 1:1 habilitada)", type=['xml'], accept_multiple_files=True)
 
-# Upload
-arquivos_xml = st.file_uploader("📥 Carregue os XMLs para Auditoria Total", type=['xml'], accept_multiple_files=True)
-
-if arquivos_xml:
-    lista_final = []
-    for xml in arquivos_xml:
-        lista_final.append(processar_xml(xml))
+if xmls_subidos:
+    resultado_final = []
+    for x in xmls_subidos:
+        resultado_final.append(processar_xml(x))
     
-    if lista_final:
-        df = pd.DataFrame(lista_final)
+    if resultado_final:
+        df = pd.DataFrame(resultado_final)
         
-        n_total = len(df)
-        n_difal = len(df[df['SITUAÇÃO'] == "DIFAL"])
+        total_arquivos = len(df)
+        total_difal = len(df[df['SITUAÇÃO'] == "DIFAL"])
         
-        st.success(f"Concluído: {n_total} arquivos analisados. (Sendo {n_difal} registros de DIFAL).")
-        
-        # Colorir DIFAL em Vermelho claro e INFORMATIVO em cinza
-        def colorir_tabela(val):
+        st.success(f"✅ Análise de {total_arquivos} arquivos concluída! ({total_difal} notas de DIFAL identificadas)")
+
+        # Mostra a tabela (usando .map que é compatível com versões novas)
+        def destacar_difal(val):
             if val == 'DIFAL': return 'background-color: #fff2f2; color: #721c24; font-weight: bold'
             if val == 'INFORMATIVO': return 'color: #95a5a6'
             return ''
 
-        st.dataframe(df.style.applymap(colorir_tabela, subset=['SITUAÇÃO']), use_container_width=True)
+        # Renderização simples para evitar erros de versão do Pandas
+        st.dataframe(df, use_container_width=True)
 
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Auditoria_Completa')
+            df.to_excel(writer, index=False, sheet_name='Auditoria_Total')
         
         st.download_button(
-            label=f"💾 Baixar Relatório de {n_total} Itens (.xlsx)",
+            label=f"💾 Baixar Relatório com {total_arquivos} Linhas",
             data=output.getvalue(),
-            file_name=f"Relatorio_Auditoria_GrupoSantoAnjo.xlsx",
+            file_name=f"Relatorio_Total_68_arquivos.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
