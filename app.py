@@ -4,10 +4,10 @@ import xml.etree.ElementTree as ET
 from io import BytesIO
 import os
 
-# Configuração da página - GRUPO SANTO ANJO
-st.set_page_config(page_title="DIFAL Grupo Santo Anjo", page_icon="👼", layout="wide")
+# Configuração da página - FOCO EXCLUSIVO EM DIFAL
+st.set_page_config(page_title="Calculador de DIFAL MG", page_icon="💸", layout="wide")
 
-# Estilo Profissional
+# Estilo Premium
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
@@ -20,35 +20,26 @@ if os.path.exists("logo.png"):
     st.sidebar.image("logo.png", use_container_width=True)
 
 st.sidebar.divider()
-st.sidebar.info("🎯 **Inteligência Fiscal**\n\nEste sistema processa apenas as Invasões Fiscais Reais para garantir 100% de precisão nos nomes e cálculos.")
+st.sidebar.warning("⚡ **Filtro Ativo: Apenas DIFAL**\n\nEste sistema está configurado para exibir apenas notas de fora do estado que geram imposto a recolher.")
 
 st.title("🎯 Identificador Automático de DIFAL")
-st.markdown("#### Grupo Santo Anjo - Processamento de Notas Fiscais Eletrônicas")
+st.markdown("#### Grupo Santo Anjo - Relatório de Notas para Recolhimento")
 st.write("---")
 
 def processar_xml(arquivo):
     try:
-        # Lê o arquivo
         conteudo = arquivo.read()
         root = ET.fromstring(conteudo)
         ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
         
-        # --- FILTRO DE SEGURANÇA: Só processa Notas Fiscais (NFe ou procNFe) ---
-        # Se for Evento, Canc, Ciência, o robô vai retornar None para não "sujar" o Excel
+        # Ignora Eventos (Ciência, Cancelamento, etc.)
         tag_root = root.tag
         if "procEvento" in tag_root or "retEvento" in tag_root or "evento" in tag_root.lower():
             return None 
 
-        # --- COLETA DE DADOS FISCAIS ---
-        # Nome do Fornecedor (Focado estritamente na tag EMITENTE)
-        fornecedor = "FORNECEDOR NÃO ENCONTRADO"
-        emitente = root.find('.//nfe:emit', ns)
-        if emitente is not None:
-            node_nome = emitente.find('nfe:xNome', ns)
-            if node_nome is not None:
-                fornecedor = node_nome.text
-
+        # Coleta básica
         nf_node = root.find('.//nfe:nNF', ns)
+        emit_node = root.find('.//nfe:emit', ns)
         valor_node = root.find('.//nfe:vNF', ns)
         cfop_node = root.find('.//nfe:det/nfe:prod/nfe:CFOP', ns)
         uf_orig_node = root.find('.//nfe:cUF', ns)
@@ -56,35 +47,36 @@ def processar_xml(arquivo):
         crt_node = root.find('.//nfe:CRT', ns)
 
         if nf_node is None or valor_node is None:
-            return None # Ignora se não tiver o básico de uma nota
+            return None
 
-        nf = nf_node.text
-        valor_nf = float(valor_node.text)
-        cfop = cfop_node.text if cfop_node is not None else "0000"
-        crt = crt_node.text if crt_node is not None else "3"
-        
-        # Lógica Fiscal de MG
+        # --- LÓGICA FILTRANTE ---
         mapa_ufs = {'11':'RO','12':'AC','13':'AM','14':'RR','15':'PA','16':'AP','17':'TO','21':'MA','22':'PI','23':'CE','24':'RN','25':'PB','26':'PE','27':'AL','28':'SE','29':'BA','31':'MG','32':'ES','33':'RJ','35':'SP','41':'PR','42':'SC','43':'RS','50':'MS','51':'MT','52':'GO','53':'DF'}
         uf_origem = mapa_ufs.get(uf_orig_node.text, '??')
         uf_destino = uf_dest_node.text if uf_dest_node is not None else "??"
+        cfop = cfop_node.text if cfop_node is not None else "0000"
 
-        justificativa = ""; tratativa = "Nenhuma ação necessária"; percentual = 0.0
-        cfops_remessa = ['6923', '6949', '6910', '6808', '6902']
-
+        # REGRA 1: Se for operação INTERNA (Minas para Minas), descarta.
         if uf_origem == uf_destino:
-            justificativa = f'Operação Interna ({uf_origem}-{uf_destino}) - Sem DIFAL'
-        elif cfop in cfops_remessa:
-            justificativa = 'Remessa de Mercadoria - Sem DIFAL'
-        elif cfop.startswith('6'):
-            percentual = 0.0735 # 7.35% fixo conforme combinado
-            tratativa = 'Gerar e recolher guia de DIFAL para o estado de MG'
-            if crt == "1":
-                justificativa = 'Venda Interestadual - Fornecedor Simples Nacional (DIFAL recolhido pelo comprador)'
-            else:
-                justificativa = 'Venda Interestadual - Fornecedor Regime Normal'
-        else:
-            justificativa = 'Outras operações/Devolução'
+            return None
+        
+        # REGRA 2: Se o CFOP não começar com 6 (Venda Interestadual), descarta.
+        if not cfop.startswith('6'):
+            return None
+            
+        # REGRA 3: Se for CFOP de Remessa (que não paga imposto), descarta.
+        cfops_remessa = ['6923', '6949', '6910', '6808', '6902', '6911', '6912', '6917']
+        if cfop in cfops_remessa:
+            return None
 
+        # Se chegou aqui, é DIFAL!
+        fornecedor = emit_node.find('nfe:xNome', ns).text if emit_node is not None else "NÃO LOCALIZADO"
+        valor_nf = float(valor_node.text)
+        crt = crt_node.text if crt_node is not None else "3"
+        percentual = 0.0735
+        
+        tratativa = 'Gerar e recolher guia de DIFAL para MG'
+        justificativa = f'Venda Interestadual ({uf_origem}->{uf_dest_node.text}) - Fornecedor {"Simples" if crt=="1" else "Normal"}'
+        
         dif_aliq = round(valor_nf * percentual, 2)
         
         return {
@@ -96,12 +88,11 @@ def processar_xml(arquivo):
     except:
         return None
 
-# --- INTERFACE DE LANÇAMENTO ---
+# --- INTERFACE ---
 arquivos_xml = st.file_uploader("📥 Arraste TODOS os seus XMLs aqui", type=['xml'], accept_multiple_files=True)
 
 if arquivos_xml:
     dados_totais = []
-    
     for xml in arquivos_xml:
         res = processar_xml(xml)
         if res:
@@ -109,19 +100,18 @@ if arquivos_xml:
     
     if dados_totais:
         df = pd.DataFrame(dados_totais)
-        # Tira as duplicatas se a mesma nota foi enviada duas vezes
         df = df.drop_duplicates(subset=['NF', 'FORNECEDOR', 'VALOR NF'])
         
-        st.success(f"📊 Relatório gerado! {len(df)} Notas Fiscais identificadas com sucesso.")
+        st.success(f"💸 Pronto! {len(df)} Notas de DIFAL identificadas.")
         st.dataframe(df, use_container_width=True)
 
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='DIFAL')
+            df.to_excel(writer, index=False, sheet_name='DIFAL_A_RECOLHER')
         
-        st.download_button(label="💾 Baixar Relatório Grupo Santo Anjo", data=output.getvalue(), file_name="Relatorio_DIFAL_Limpo_SantoAnjo.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(label="💾 Baixar Lista de DIFAL - Grupo Santo Anjo", data=output.getvalue(), file_name="DIFAL_PARA_RECOLHER_SANTOANJO.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     else:
-        st.error("Nenhuma Nota Fiscal Real (procNFe) foi encontrada no lote de arquivos enviado.")
+        st.info("Nenhuma operação de DIFAL (Venda Interestadual) foi encontrada nos arquivos enviados.")
 
-# RODAPÉ COM TEUS CRÉDITOS
-st.markdown("""<div class="footer-text">🛡️ Apoio Fiscal - <b>Grupo Santo Anjo</b> | 👨‍💻 Desenvolvido por <b>Estevão Henrique</b></div>""", unsafe_allow_html=True)
+# RODAPÉ
+st.markdown("""<div class="footer-text">🛡️ Controle de Arrecadação - <b>Grupo Santo Anjo</b> | 👨‍💻 Desenvolvido por <b>Estevão Henrique</b></div>""", unsafe_allow_html=True)
